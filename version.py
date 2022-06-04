@@ -268,6 +268,7 @@ class GitlabReleaseHelper:
 
         :param new_tag: new tag name to calculate previous tag.
         :param target_branch: branch name key.
+        :param refresh: refresh Gitlab project object to gather the latest state.
         :param rel_type: type of release: for fix of first release.
         :param prefix: pattern for release branches, see REL_PREFIX.
         :return: str
@@ -277,7 +278,7 @@ class GitlabReleaseHelper:
             filtered_rel_tags = [
                 t.name
                 for t in self._get_all_rel_valid_tags(refresh=refresh)
-                if re.match(pattern=release_base_pattern, string=t.name)
+                if not re.match(pattern=release_base_pattern, string=t.name)
                 and t.name < new_tag
             ]
             filtered_rel_tags.sort(key=pv, reverse=True)
@@ -319,8 +320,7 @@ class GitlabReleaseHelper:
         """
         Return new release candidate tag.
         !!!
-        Pay attention if there are no any release candidate tag present in project method
-        returns 1.0.0 as a first release candidate tag.
+        Pay attention if there are no any release candidate tag present in project method returns 1.0.0 as a first release candidate tag.
         !!!
 
         :param branch: optional and mostly required for log output.
@@ -338,8 +338,8 @@ class GitlabReleaseHelper:
             return self._bump_new_rc_tag(latest_tag=latest_tag)
         else:
             logger.warning(
-                f"There are no any valid tags found, "
-                f"new initial tag {major_ver}.0.0-rc will be set on commit {commit} in {branch} branch."
+                f"There are no any valid tags found, new initial tag {major_ver}.0.0-rc will be set on commit {commit} in"
+                f" {branch} branch."
             )
             return f'{major_ver}.0.0{DEFAULTS.get("RC_SUFFIX")}'
 
@@ -376,9 +376,9 @@ class GitlabReleaseHelper:
         """
         Create new release tag.
 
-        :param major_ver: major release candidate version, 1 - 1.x.x, 2 - 2.x.x, etc.
         :param target_branch: optional and mostly required for log output.
         :param target_commit: target commit for tagging.
+        :param: major_ver: major release candidate version, 1 - 1.x.x, 2 - 2.x.x, etc.
         :return: None
         """
         new_rc_tag = semver.parse_version_info(
@@ -546,6 +546,7 @@ class GitlabReleaseHelper:
         :param source_branch: source release branch for generating change log if no previous release tags available.
         :param release_branch: release branch name to calculate previous release tag.
         :param new_tag: tag for calculating Release name.
+        :param rel_type: type of release: for fix of first release.
         :return: None
         """
         logger.info(f"Preparing Release for {release_branch} release branch.")
