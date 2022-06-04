@@ -11,63 +11,6 @@ Description
 version.py - is a Python script that is required to perform simple release cycle logic for Gitlab projects.
 Authentication and Authorization are based on Gitlab user-account and api-token for this account.
 Gitlab target instance - should be set through GITLAB_URL env.
-
-###
-Supported release cycle
-###
-1. Tag developing branch with rc/1.x.x release candidate tag after MR is merged to developing branch.
-   Tag version is being calculated based on previous release candidate tag (minor version).
-2. Promote release:
-2.1. Create release/1.x.x branch from release candidate tag state.
-2.2. Create release tag 1.x.x based on new release/1.x.x branch.
-3. Create Release entity.
-4. Bump release tag fix version for fix-commits to the release branch.
-
-###
-Available modes
-###
-* create-rc-tag - create initial or incremented tag based on the latest release candidate tag;
-* promote-release - cut release/ branch and create release tag;
-* create-fix-tag - bump fix part for release tag;
-
-###
-Script arguments
-###
-* --project-name (Required) - target project for release cycle.
-* --gitlab-api-token (Required)(Default: comes from GITLAB_API_TOKEN env) - Gitlab API authorization token.
-* --verbose (Optional)(Default: INFO) - set a verbose output for logger.
-* --mode (Required) -[create-rc-tag, promote-release, create-fix-tag] - see Available modes article.
-* --tag (Depends on mode) - tag which will be promoted.
-* --branch (Depends on mode - a branch name to set a tag for, mostly it requires for log output.
-* --commit (Depends on mode - a commit sha to set a tag for.
-* --project-main-branch (Optional) - a main branch which we use to cut a release/ or generate Release notes if no tags.
-* --major-ver (Optional)(Default: 1) - A major part of X.x.x release pattern.
-
-###
-Example
-###
-Via GITLAB_API_TOKEN env declaration:
-export GITLAB_API_TOKEN=my_awesome_gitlab_token
-python3 version.py --project-name my-awesome-project ---mode create-rc-tag --commit sha --branch my-awesome-branch
-
-Via script argument:
-python3 version.py --project-name my-awesome-project \
-                   --gitlab-api-token my-awesome-token \
-                   ---mode create-rc-tag \
-                   --commit sha --branch my-awesome-branch
-
-###
-Requirements
-###
-interpreter - python 3.10.4
-
-libs:
-loguru==0.6.0
-python-gitlab==3.5.0
-requests==2.27.1
-semver==2.13.0
-packaging==21.3
-Jinja2==3.1.1
 """
 
 import os
@@ -87,72 +30,10 @@ from gitlab.exceptions import (
     GitlabGetError,
     GitlabCreateError,
 )
+
+from libs.defaults import DEFAULTS
 from gitlab.v4.objects import ProjectBranch, Project, ProjectTag
 from gitlab.base import RESTObject
-
-DEFAULTS = {
-    "LOGURU_CONFIG": {
-        "INFO": {
-            "sink": sys.stdout,
-            "level": "INFO",
-            "format": "<level>{level}</level> - "
-            "<level><c>{time:YYYY-MM-DD HH:mm:ss}</c></level> - "
-            "<level>{message}</level>",
-            "filter": None,
-            "serialize": False,
-            "colorize": True,
-            "diagnose": False,
-            "backtrace": False,
-            "catch": False,
-        },
-        "DEBUG": {
-            "sink": sys.stdout,
-            "level": "DEBUG",
-            "format": "<level>{level}</level> - "
-            "<level><c>{time:YYYY-MM-DD HH:mm:ss}</c></level> - "
-            "<level>{function}:{line}</level> - "
-            "<level>{message}</level>",
-            "filter": None,
-            "serialize": False,
-            "colorize": True,
-            "diagnose": False,
-            "backtrace": False,
-            "catch": False,
-        },
-    },
-    "RC_RE": r"^\d+\.\d+\.\d+-rc$",
-    "REL_RE": r"^\d+\.\d+\.\d+$",
-    "PATCH_REL_RE": r"^\d+\.\d+\.[1-9]+(\d+)?$",
-    "RC_SUFFIX": r"-rc",
-    "REL_PREFIX": r"release/",
-}
-
-RELEASE_NOTES_J2 = """
-{%- for element in changelog_data %}
-#### Commit details for {{ element.get("commit_id") }}
-
-- {{ element.get("title") }} - {{ element.get("commit_id") }}
-- Author: {{ element.get("commit_author") }}
-- Committed date: {{ element.get("committed_date") }}
-- Stats: {{ element.get("stats") }}
-
-### Changed elements
-
-<details>
-<summary>Changes were introduced in elements</summary>
-<p>
-
-```html
-{%- for item in element.get("diff") %}
-{{ item }}
-{%- endfor %}
-```
-
-</p>
-</details>
-{% endfor -%}
-
-"""
 
 
 class GitlabReleaseHelper:
@@ -172,7 +53,7 @@ class GitlabReleaseHelper:
         :return: gitlab.Gitlab
         """
         try:
-            gitlab_url = os.getenv("GITLAB_URL", "")
+            gitlab_url = self.args.gitlab_url
             gitlab_api_token = self.args.gitlab_api_token
             return gitlab.Gitlab(url=gitlab_url, private_token=gitlab_api_token)
         except (GitlabAuthenticationError, ConnectionError) as e:
@@ -186,7 +67,12 @@ class GitlabReleaseHelper:
         :param project_name: full project name group/subgroup/.../project required.
         :return: gitlab.v4.objects.Project
         """
-        logger.info(f"Loading {project_name} project entity.")
+        if project_name:
+            logger.info(f"Loading {project_name} project entity.")
+        else:
+            logger.error("Target project is not defined, set project via argument or env variable.")
+            sys.exit(1)
+
         try:
             return self.gl.projects.get(project_name)
         except GitlabGetError as e:
@@ -535,7 +421,10 @@ class GitlabReleaseHelper:
         :param changelog: a dict with changes.
         :return: str
         """
-        return Template(RELEASE_NOTES_J2).render(changelog_data=changelog)
+
+        with open(self.args.release_template, 'r') as file_:
+            template = Template(file_.read())
+        return template.render(changelog_data=changelog)
 
     def create_release_entity(
         self, source_branch: str, release_branch: str, new_tag: str, rel_type: str
@@ -577,14 +466,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--project-name",
-        required=True,
-        default="contact-center/integrations/devops/environments/engage-voice/test-pipeline",
-        help="Debug verbose output",
+        default=os.getenv("GITLAB_TARGET_PROJECT", ""),
+        help="The target project for release cycle.",
     )
     parser.add_argument(
         "--gitlab-api-token",
         default=os.getenv("GITLAB_API_TOKEN", ""),
         help="Gitlab API token for authorization",
+    )
+    parser.add_argument(
+        "--gitlab-url",
+        default=os.getenv("GITLAB_URL", "https://gitlab.com"),
+        help="Gitlab API instance URL",
     )
     parser.add_argument(
         "--verbose",
@@ -615,13 +508,18 @@ def main():
         help="A commit hash which will be used for a new tag",
     )
     parser.add_argument(
+        "--release-template",
+        default=os.getenv("GITLAB_RELEASE_TEMPLATE", "./release_templates/default.j2"),
+        help="A path to release notes Jinja2 template.",
+    )
+    parser.add_argument(
         "--project-main-branch",
-        default="master",
+        default=os.getenv("GITLAB_MAIN_BRANCH", "master"),
         help="A main branch which we use to cut a release/ or generate Release notes if no tags.",
     )
     parser.add_argument(
         "--major-ver",
-        default=1,
+        default=os.getenv("GITLAB_MAJOR_RELEASE", 1),
         help="A major part of X.x.x release pattern.",
     )
 

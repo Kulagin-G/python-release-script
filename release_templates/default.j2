@@ -1,0 +1,23 @@
+{%- for element in changelog_data %}
+#### Commit details for {{ element.get("commit_id") }}
+
+- {{ element.get("title") }} - {{ element.get("commit_id") }}
+- Author: {{ element.get("commit_author") }}
+- Committed date: {{ element.get("committed_date") }}
+- Stats: {{ element.get("stats") }}
+
+### Changed elements
+
+<details>
+<summary>Changes were introduced in elements</summary>
+<p>
+
+```html
+{%- for item in element.get("diff") %}
+{{ item }}
+{%- endfor %}
+```
+
+</p>
+</details>
+{% endfor -%}
