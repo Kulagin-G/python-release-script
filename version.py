@@ -165,7 +165,7 @@ class GitlabReleaseHelper:
                 t.name
                 for t in self._get_all_rel_valid_tags(refresh=refresh)
                 if not re.match(pattern=release_base_pattern, string=t.name)
-                and t.name < new_tag
+                and semver.compare(t.name, new_tag) == -1
             ]
             filtered_rel_tags.sort(key=pv, reverse=True)
             if filtered_rel_tags:
@@ -177,7 +177,7 @@ class GitlabReleaseHelper:
             all_release_tags = [
                 t.name
                 for t in self._get_all_rel_valid_tags(refresh=refresh)
-                if t.name < new_tag
+                if semver.compare(t.name, new_tag) == -1
             ]
             all_release_tags.sort(key=pv, reverse=True)
             if all_release_tags:
