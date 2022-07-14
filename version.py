@@ -70,7 +70,9 @@ class GitlabReleaseHelper:
         if project_name:
             logger.info(f"Loading {project_name} project entity.")
         else:
-            logger.error("Target project is not defined, set project via argument or env variable.")
+            logger.error(
+                "Target project is not defined, set project via argument or env variable."
+            )
             sys.exit(1)
 
         try:
@@ -115,12 +117,13 @@ class GitlabReleaseHelper:
         """
         if tags := self._get_all_tags(refresh=refresh):
             if latest_valid_rc_tags := [
-                t
+                t.name
                 for t in tags
                 if re.match(pattern=DEFAULTS.get("RC_RE"), string=t.name)
                 and semver.parse_version_info(t.name).major == major_ver
             ]:
-                return latest_valid_rc_tags[0]
+                latest_valid_rc_tags.sort(key=pv, reverse=True)
+                return [at for at in tags if at.name == latest_valid_rc_tags[0]][0]
             return []
         return []
 
@@ -422,7 +425,7 @@ class GitlabReleaseHelper:
         :return: str
         """
 
-        with open(self.args.release_template, 'r') as file_:
+        with open(self.args.release_template, "r") as file_:
             template = Template(file_.read())
         return template.render(changelog_data=changelog)
 
