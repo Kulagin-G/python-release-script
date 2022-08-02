@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """
 ### License
 @Author: Georgiy Kulagin - kulagingol@gmail.com
@@ -19,8 +20,10 @@ import sys
 from pprint import pformat
 
 import argparse
+
 import gitlab
 import semver
+import yaml
 from jinja2 import Template
 from packaging.version import parse as pv
 from loguru import logger
@@ -29,8 +32,10 @@ from gitlab.exceptions import (
     GitlabAuthenticationError,
     GitlabGetError,
     GitlabCreateError,
+    GitlabUpdateError,
 )
 
+from libs.helpers import repeat
 from libs.defaults import DEFAULTS
 from gitlab.v4.objects import ProjectBranch, Project, ProjectTag
 from gitlab.base import RESTObject
@@ -38,7 +43,7 @@ from gitlab.base import RESTObject
 
 class GitlabReleaseHelper:
     """
-    The main class
+    The main class.
     """
 
     def __init__(self, args):
@@ -232,6 +237,24 @@ class GitlabReleaseHelper:
             )
             return f'{major_ver}.0.0{DEFAULTS.get("RC_SUFFIX")}'
 
+    @repeat(times=3, timeout=2, exceptions=[GitlabCreateError, GitlabUpdateError])
+    def _create_tag(self, new_tag: str, target_commit: str) -> RESTObject | Exception:
+        """
+        Wrapper above Project.tags.create method.
+
+        :param new_tag: tag which will be set.
+        :param target_commit: target commit for tagging.
+        :return:
+        """
+        try:
+            return self.target_project.tags.create(
+                {"tag_name": new_tag, "ref": target_commit}
+            )
+        except (GitlabCreateError, GitlabUpdateError) as e:
+            logger.error(f"Error occurred during tag {new_tag} creation: {e}")
+            logger.warning(f"Repeat {new_tag} tag creation procedure.")
+            return e
+
     def _set_new_tag(
         self, target_branch: str, target_commit: str, new_tag: str
     ) -> None:
@@ -247,12 +270,12 @@ class GitlabReleaseHelper:
             all=True, query_parameters={"ref_name": target_branch}
         )
         if target_commit in [c.id for c in commits]:
-            try:
-                self.target_project.tags.create(
-                    {"tag_name": new_tag, "ref": target_commit}
+            tag = self._create_tag(new_tag=new_tag, target_commit=target_commit)
+            if not isinstance(tag, ProjectTag):
+                logger.error(
+                    f"{new_tag} tag creation has been failed, received response from API => {tag}"
                 )
-            except GitlabCreateError as e:
-                logger.error(f"During tag creating error occurred: {e}")
+                sys.exit(1)
         else:
             logger.error(
                 f"Commit {target_commit} was not found in {target_branch} branch."
@@ -261,7 +284,7 @@ class GitlabReleaseHelper:
 
     def create_new_rc_tag(
         self, target_branch: str, target_commit: str, major_ver: int
-    ) -> None:
+    ) -> str | None:
         """
         Create new release tag.
 
@@ -284,9 +307,30 @@ class GitlabReleaseHelper:
             logger.info(
                 f"A new tag {new_rc_tag} has been set on commit {target_commit} for {target_branch.name} branch."
             )
+            return new_rc_tag.__str__()
         else:
             logger.error(f"{target_branch} branch was not found.")
             sys.exit(1)
+
+    @repeat(times=3, timeout=1, exceptions=[GitlabCreateError])
+    def _create_branch(
+        self, target_branch: str, source_branch: str
+    ) -> RESTObject | Exception:
+        """
+        Wrapper above Project.branches.create method.
+
+        :param target_branch: new branch name.
+        :param source_branch: branch which from new release branch will be created.
+        :return:
+        """
+        try:
+            return self.target_project.branches.create(
+                {"branch": target_branch, "ref": source_branch}
+            )
+        except GitlabCreateError as e:
+            logger.error(f"Error occurred during branch {target_branch} creation: {e}")
+            logger.warning(f"Repeat branch {target_branch} creation procedure.")
+            return e
 
     def create_release_branch(
         self,
@@ -308,9 +352,16 @@ class GitlabReleaseHelper:
         target_branch = prefix + str(release.major) + "." + str(release.minor)
         if not (branch := self._get_branch(target_branch=target_branch)):
             logger.info(f"Creating new {target_branch} branch from {source_branch}.")
-            return self.target_project.branches.create(
-                {"branch": target_branch, "ref": source_branch}
+            new_branch = self._create_branch(
+                target_branch=target_branch, source_branch=source_branch
             )
+            if not isinstance(new_branch, ProjectBranch):
+                logger.error(
+                    f"{target_branch} branch creation has been failed, received response from API => {branch}"
+                )
+                sys.exit(1)
+            else:
+                return new_branch
         else:
             logger.warning(
                 f"Target branch {target_branch} is already existed in Gitlab, skipping branch creating..."
@@ -461,6 +512,22 @@ class GitlabReleaseHelper:
         }
         self.target_project.releases.create(payload)
 
+    def write_output_to_file(self, new_tag: str, file_name: str) -> None:
+        """
+        Create output.yaml file.
+
+        :param new_tag: a tag name.
+        :param file_name: file with output.
+        :return: None
+        """
+        output = {
+            "project_name": self.target_project.path_with_namespace,
+            "tag_name": new_tag,
+        }
+        logger.info(f"Writing output to {file_name}")
+        with open(file=file_name, mode="w") as file:
+            yaml.dump(output, file)
+
 
 def main():
     """
@@ -525,6 +592,11 @@ def main():
         default=os.getenv("GITLAB_MAJOR_RELEASE", 1),
         help="A major part of X.x.x release pattern.",
     )
+    parser.add_argument(
+        "--output-file",
+        default=os.getenv("OUTPUT_FILE_NAME", "./output.yaml"),
+        help="File name where simple tag output will be saved.",
+    )
 
     args = parser.parse_args()
     logger.remove()
@@ -550,17 +622,20 @@ def main():
     grh = GitlabReleaseHelper(args)
 
     if args.mode == "create-rc-tag":
-        grh.create_new_rc_tag(
+        new_rc_tag = grh.create_new_rc_tag(
             target_branch=args.branch,
             target_commit=args.commit,
             major_ver=args.major_ver,
         )
+        if new_rc_tag:
+            grh.write_output_to_file(new_tag=new_rc_tag, file_name=args.output_file)
     elif args.mode == "promote-release":
         release_branch = grh.create_release_branch(
             source_tag=args.tag, source_branch=args.project_main_branch
         )
         new_rel_tag = grh.create_new_rel_tag(release_branch=release_branch)
         if new_rel_tag:
+            grh.write_output_to_file(new_tag=new_rel_tag, file_name=args.output_file)
             grh.create_release_entity(
                 source_branch=args.project_main_branch,
                 release_branch=release_branch.name,
@@ -570,6 +645,7 @@ def main():
     elif args.mode == "create-fix-tag":
         new_fix_tag = grh.create_new_fix_tag(branch=args.branch)
         if new_fix_tag:
+            grh.write_output_to_file(new_tag=new_fix_tag, file_name=args.output_file)
             grh.create_release_entity(
                 source_branch=args.project_main_branch,
                 release_branch=args.branch,

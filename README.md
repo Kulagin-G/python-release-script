@@ -31,6 +31,7 @@ Supported release cycle description you can find in [docs](docs/release_cycle.md
 * **--release-template** (Optional)(Default: GITLAB_RELEASE_TEMPLATE, ./release_templates/default.j2) - A path to release notes Jinja2 template.
 * **--project-main-branch** (Optional) - a main branch which we use to cut a release/ or generate Release notes if no tags.
 * **--major-ver** (Optional)(Default: 1) - A major part of X.x.x release pattern.
+* **--output-file** (Optional)(Default: OUTPUT_FILE_NAME, ./output.yaml) - A log file with project name and generated tag.
 
 ### How to use
 
@@ -69,6 +70,7 @@ Main interpreter python 3.10.4
 - semver==2.13.0
 - packaging==21.3
 - Jinja2==3.1.1
+- PyYAML==6.0
 
 ### TODO:
 1. Compose a lib for importing and rendering different release notes Jinja2 templates.

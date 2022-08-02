@@ -10,8 +10,8 @@ DEFAULTS = {
             "sink": sys.stdout,
             "level": "INFO",
             "format": "<level>{level}</level> - "
-                      "<level><c>{time:YYYY-MM-DD HH:mm:ss}</c></level> - "
-                      "<level>{message}</level>",
+            "<level><c>{time:YYYY-MM-DD HH:mm:ss}</c></level> - "
+            "<level>{message}</level>",
             "filter": None,
             "serialize": False,
             "colorize": True,
@@ -23,9 +23,9 @@ DEFAULTS = {
             "sink": sys.stdout,
             "level": "DEBUG",
             "format": "<level>{level}</level> - "
-                      "<level><c>{time:YYYY-MM-DD HH:mm:ss}</c></level> - "
-                      "<level>{function}:{line}</level> - "
-                      "<level>{message}</level>",
+            "<level><c>{time:YYYY-MM-DD HH:mm:ss}</c></level> - "
+            "<level>{function}:{line}</level> - "
+            "<level>{message}</level>",
             "filter": None,
             "serialize": False,
             "colorize": True,
